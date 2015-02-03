@@ -9,12 +9,13 @@
 #import "CMGViewController.h"
 #import "CMGOverlayView.h"
 
-@interface CMGViewController ()<AVCaptureMetadataOutputObjectsDelegate>
+@interface CMGViewController ()<AVCaptureMetadataOutputObjectsDelegate, UIAlertViewDelegate>
 
 @property(nonatomic, strong) AVCaptureSession *session;
 @property(nonatomic, strong) UIView *previewView;
 @property(nonatomic, strong) AVCaptureVideoPreviewLayer *previewLayer;
 @property(nonatomic, strong) CMGOverlayView *overlayView;
+@property(nonatomic, strong) IBOutlet UILabel *barcode;
 
 @end
 
@@ -51,9 +52,21 @@
             break;
         }
     }
+    
+    NSError *error = nil;
+    [camera lockForConfiguration:&error];
+    if([camera isFocusModeSupported:AVCaptureFocusModeContinuousAutoFocus]) {
+        [camera setFocusMode:AVCaptureFocusModeContinuousAutoFocus];
+    }
+    if([camera isAutoFocusRangeRestrictionSupported]) {
+        [camera setAutoFocusRangeRestriction:AVCaptureAutoFocusRangeRestrictionNear];
+    }
+    [camera unlockForConfiguration];
+    if(error) {
+        NSLog(@"Erorr locking for configuration, %@", error);
+    }
 	
 	// Create a AVCaptureInput with the camera device
-	NSError *error=nil;
 	AVCaptureDeviceInput *cameraInput = [[AVCaptureDeviceInput alloc] initWithDevice:camera error:&error];
 	if (cameraInput == nil) {
 		NSLog(@"Error to create camera capture:%@",error);
@@ -74,7 +87,7 @@
                                                       AVMetadataObjectTypeEAN13Code,
                                                       AVMetadataObjectTypeEAN8Code,
                                                       AVMetadataObjectTypePDF417Code,
-                                                      AVMetadataObjectTypeQRCode,
+//                                                      AVMetadataObjectTypeQRCode,
                                                       AVMetadataObjectTypeUPCECode]];
 
     NSMutableArray *supportedMetaDataTypes = [NSMutableArray array];
@@ -93,32 +106,41 @@
 	[self.session startRunning];
 }
 
+-(void) alertView:(UIAlertView *)alertView didDismissWithButtonIndex:(NSInteger)buttonIndex {
+    [self.session startRunning];
+}
+
 - (void)captureOutput:(AVCaptureOutput *)captureOutput didOutputMetadataObjects:(NSArray *)metadataObjects fromConnection:(AVCaptureConnection *)connection {
-    // draw where the recognised data is - for 1D barcodes this turns out to be just a line accross the code. For 2D barcodes it's a bit more interesting
-    CGMutablePathRef pathRef = CGPathCreateMutable();
-    CGAffineTransform transform = CGAffineTransformMakeScale(self.overlayView.bounds.size.width, self.overlayView.bounds.size.height);
-    
-    for(AVMetadataMachineReadableCodeObject *recognizedObject in metadataObjects) {
-        NSLog(@"%@", recognizedObject.stringValue);
+    if(metadataObjects.count > 0) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            AVMetadataMachineReadableCodeObject *recognizedObject = metadataObjects.firstObject;
+            self.barcode.text = recognizedObject.stringValue;
+            [[[UIAlertView alloc] initWithTitle:@"Scanned" message:recognizedObject.stringValue delegate:self cancelButtonTitle:@"OK" otherButtonTitles:nil] show];
+        });
+        [self.session stopRunning];
+        // draw where the recognised data is - for 1D barcodes this turns out to be just a line accross the code. For 2D barcodes it's a bit more interesting
+        CGMutablePathRef pathRef = CGPathCreateMutable();
+        CGAffineTransform transform = CGAffineTransformMakeScale(self.overlayView.bounds.size.width, self.overlayView.bounds.size.height);
         
-        CGPoint p1 = CGPointMake(0.4, 0.4);
-        CGPointMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)(recognizedObject.corners[0]), &p1);
-        CGPoint p2 = CGPointMake(0.5, 0.4);
-        CGPointMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)(recognizedObject.corners[1]), &p2);
-        CGPoint p3 = CGPointMake(0.5, 0.5);
-        CGPointMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)(recognizedObject.corners[2]), &p3);
-        CGPoint p4 = CGPointMake(0.4, 0.5);
-        CGPointMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)(recognizedObject.corners[3]), &p4);
-        
-        CGPathMoveToPoint(pathRef, &transform, 1-p1.y, p1.x);
-        CGPathAddLineToPoint(pathRef, &transform, 1-p2.y, p2.x);
-        CGPathAddLineToPoint(pathRef, &transform, 1-p3.y, p3.x);
-        CGPathAddLineToPoint(pathRef, &transform, 1-p4.y, p4.x);
-        CGPathCloseSubpath(pathRef);
-        
+        for(AVMetadataMachineReadableCodeObject *recognizedObject in metadataObjects) {
+            CGPoint p1 = CGPointMake(0.4, 0.4);
+            CGPointMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)(recognizedObject.corners[0]), &p1);
+            CGPoint p2 = CGPointMake(0.5, 0.4);
+            CGPointMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)(recognizedObject.corners[1]), &p2);
+            CGPoint p3 = CGPointMake(0.5, 0.5);
+            CGPointMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)(recognizedObject.corners[2]), &p3);
+            CGPoint p4 = CGPointMake(0.4, 0.5);
+            CGPointMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)(recognizedObject.corners[3]), &p4);
+            
+            CGPathMoveToPoint(pathRef, &transform, 1-p1.y, p1.x);
+            CGPathAddLineToPoint(pathRef, &transform, 1-p2.y, p2.x);
+            CGPathAddLineToPoint(pathRef, &transform, 1-p3.y, p3.x);
+            CGPathAddLineToPoint(pathRef, &transform, 1-p4.y, p4.x);
+            CGPathCloseSubpath(pathRef);
+        }
+        ((CAShapeLayer *) self.overlayView.layer).path = pathRef;
+        CGPathRelease(pathRef);
     }
-    ((CAShapeLayer *) self.overlayView.layer).path = pathRef;
-    CGPathRelease(pathRef);
 }
 
 -(void) viewDidLayoutSubviews {
